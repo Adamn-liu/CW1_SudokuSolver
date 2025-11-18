@@ -1,3 +1,5 @@
+//初始版本，手动输入数独。下一步准备添加txt输入，计时计数器。
+
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -182,4 +184,5 @@ public class SudokuSolver extends JFrame {
             new SudokuSolver().setVisible(true);
         });
     }
+
 }
