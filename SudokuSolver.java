@@ -1,21 +1,27 @@
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.io.*;
-import java.nio.file.*;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.List;
 import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 public class SudokuSolver extends JFrame {
-    private JTextField[][] cells = new JTextField[9][9];
-    private int[][] board = new int[9][9];
-    private JLabel statusLabel; // 用于显示回溯次数和时间
+    private final JTextField[][] cells = new JTextField[9][9];
+    private final int[][] board = new int[9][9];
+    private final JLabel statusLabel;
+    private volatile boolean solving = false;
+    private volatile boolean cancelRequested = false;
+    private static int backtrackCount = 0;
+    private int delayMs = 5; // 动画延迟（毫秒）
 
     public SudokuSolver() {
-        setTitle("Sudoku Solver");
+        setTitle("Sudoku Solver with Visualization");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
-        // 网格面板
         JPanel gridPanel = new JPanel(new GridLayout(9, 9, 2, 2));
         gridPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
@@ -26,7 +32,6 @@ public class SudokuSolver extends JFrame {
                 cell.setFont(new Font("Arial", Font.BOLD, 18));
                 cell.setPreferredSize(new Dimension(50, 50));
 
-                // 设置边框模拟 3x3 宫格
                 int top = (i % 3 == 0 && i != 0) ? 3 : 1;
                 int left = (j % 3 == 0 && j != 0) ? 3 : 1;
                 cell.setBorder(BorderFactory.createMatteBorder(top, left, 1, 1, Color.BLACK));
@@ -38,11 +43,10 @@ public class SudokuSolver extends JFrame {
 
         add(gridPanel, BorderLayout.CENTER);
 
-        // 按钮面板
         JPanel buttonPanel = new JPanel();
-        JButton solveButton = new JButton("solve");
-        JButton clearButton = new JButton("erease");
-        JButton loadButton = new JButton("from .txt upload");
+        JButton solveButton = new JButton("Solve");
+        JButton clearButton = new JButton("Erase");
+        JButton loadButton = new JButton("Load .txt");
 
         solveButton.addActionListener(new SolveAction());
         clearButton.addActionListener(e -> clearBoard());
@@ -53,8 +57,7 @@ public class SudokuSolver extends JFrame {
         buttonPanel.add(loadButton);
         add(buttonPanel, BorderLayout.SOUTH);
 
-        // 状态标签（显示回溯次数和时间）
-        statusLabel = new JLabel("Backtrace: - | COST: - ms", JLabel.CENTER);
+        statusLabel = new JLabel("Backtrack: - | Time: - ms", JLabel.CENTER);
         statusLabel.setFont(new Font("Arial", Font.PLAIN, 12));
         add(statusLabel, BorderLayout.NORTH);
 
@@ -72,8 +75,8 @@ public class SudokuSolver extends JFrame {
                     board[i][j] = Integer.parseInt(text);
                 } else {
                     JOptionPane.showMessageDialog(this,
-                        "cell (" + (i+1) + ", " + (j+1) + ") must input 1--9 or nothing",
-                        "input error", JOptionPane.ERROR_MESSAGE);
+                        "Cell (" + (i+1) + ", " + (j+1) + ") must be 1-9 or empty.",
+                        "Input Error", JOptionPane.ERROR_MESSAGE);
                     throw new IllegalArgumentException();
                 }
             }
@@ -87,13 +90,8 @@ public class SudokuSolver extends JFrame {
                 cells[i][j].setForeground(Color.BLACK);
             }
         }
-        statusLabel.setText("Backtrace: - | COST: - ms");
+        statusLabel.setText("Backtrack: - | Time: - ms");
     }
-
-    // ========================
-    // 数独求解器（带计数）
-    // ========================
-    private static int backtrackCount = 0;
 
     private boolean isValid(int row, int col, int num) {
         for (int j = 0; j < 9; j++) if (board[row][j] == num) return false;
@@ -106,27 +104,6 @@ public class SudokuSolver extends JFrame {
         return true;
     }
 
-    private boolean solveSudoku() {
-        for (int i = 0; i < 9; i++) {
-            for (int j = 0; j < 9; j++) {
-                if (board[i][j] == 0) {
-                    for (int num = 1; num <= 9; num++) {
-                        if (isValid(i, j, num)) {
-                            board[i][j] = num;
-                            if (solveSudoku()) {
-                                return true;
-                            }
-                            board[i][j] = 0;
-                        }
-                    }
-                    backtrackCount++; // 回溯发生！
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     // ========================
     // GUI 事件处理器
     // ========================
@@ -134,37 +111,133 @@ public class SudokuSolver extends JFrame {
     class SolveAction implements ActionListener {
         @Override
         public void actionPerformed(ActionEvent e) {
+            if (solving) return;
+
             try {
                 loadBoardFromGUI();
                 int[][] original = new int[9][9];
-                for (int i = 0; i < 9; i++)
+                for (int i = 0; i < 9; i++) {
                     System.arraycopy(board[i], 0, original[i], 0, 9);
+                    for (int j = 0; j < 9; j++) {
+                        if (original[i][j] != 0) {
+                            cells[i][j].setForeground(Color.BLACK);
+                        }
+                    }
+                }
 
+                solving = true;
+                cancelRequested = false;
                 backtrackCount = 0;
                 long startTime = System.currentTimeMillis();
 
-                boolean solved = solveSudoku();
+                // SwingWorker 匿名内部类
+                SwingWorker<Boolean, int[]> worker = new SwingWorker<Boolean, int[]>() {
+                    private int[][] localBoard = board; // 引用外部 board
 
-                long endTime = System.currentTimeMillis();
-                long duration = endTime - startTime;
+                    @Override
+                    protected Boolean doInBackground() throws Exception {
+                        return solveRecursive(original);
+                    }
 
-                if (solved) {
-                    // 更新原为空的格子为蓝色
-                    for (int i = 0; i < 9; i++) {
-                        for (int j = 0; j < 9; j++) {
-                            if (original[i][j] == 0 && board[i][j] != 0) {
-                                cells[i][j].setText(String.valueOf(board[i][j]));
+                    // 在 SwingWorker 内部定义求解逻辑
+                    private boolean solveRecursive(int[][] original) {
+                        for (int i = 0; i < 9; i++) {
+                            if (cancelRequested) return false;
+                            for (int j = 0; j < 9; j++) {
+                                if (cancelRequested) return false;
+                                if (localBoard[i][j] == 0) {
+                                    for (int num = 1; num <= 9; num++) {
+                                        if (cancelRequested) return false;
+                                        if (isValidInWorker(i, j, num)) {
+                                            localBoard[i][j] = num;
+                                            publish(new int[]{i, j, num});
+
+                                            if (delayMs > 0) {
+                                                try {
+                                                    Thread.sleep(delayMs);
+                                                } catch (InterruptedException ex) {
+                                                    cancelRequested = true;
+                                                    return false;
+                                                }
+                                            }
+
+                                            if (solveRecursive(original)) {
+                                                return true;
+                                            }
+
+                                            localBoard[i][j] = 0;
+                                            publish(new int[]{i, j, 0});
+
+                                            if (delayMs > 0) {
+                                                try {
+                                                    Thread.sleep(delayMs);
+                                                } catch (InterruptedException ex) {
+                                                    cancelRequested = true;
+                                                    return false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    backtrackCount++;
+                                    return false;
+                                }
+                            }
+                        }
+                        return true;
+                    }
+
+                    // 在 worker 中使用的 isValid（避免访问非 final 外部变量）
+                    private boolean isValidInWorker(int row, int col, int num) {
+                        for (int j = 0; j < 9; j++) if (localBoard[row][j] == num) return false;
+                        for (int i = 0; i < 9; i++) if (localBoard[i][col] == num) return false;
+                        int startRow = 3 * (row / 3);
+                        int startCol = 3 * (col / 3);
+                        for (int i = startRow; i < startRow + 3; i++)
+                            for (int j = startCol; j < startCol + 3; j++)
+                                if (localBoard[i][j] == num) return false;
+                        return true;
+                    }
+
+                    @Override
+                    protected void process(java.util.List<int[]> chunks) {
+                        for (int[] update : chunks) {
+                            int i = update[0], j = update[1], val = update[2];
+                            cells[i][j].setText(val == 0 ? "" : String.valueOf(val));
+                            if (val != 0) {
                                 cells[i][j].setForeground(Color.BLUE);
+                            } else {
+                                cells[i][j].setForeground(Color.BLACK);
                             }
                         }
                     }
-                    statusLabel.setText(String.format("backtrace: %d | COST: %d ms", backtrackCount, duration));
-                } else {
-                    JOptionPane.showMessageDialog(SudokuSolver.this, "this sudoku have no solution!", "no solution", JOptionPane.WARNING_MESSAGE);
-                    statusLabel.setText("backtrace: - | COST: - ms");
-                }
+
+                    @Override
+                    protected void done() {
+                        solving = false;
+                        long endTime = System.currentTimeMillis();
+                        try {
+                            boolean solved = get();
+                            long duration = endTime - startTime;
+                            if (solved) {
+                                statusLabel.setText(String.format("Backtrack: %d | Time: %d ms", backtrackCount, duration));
+                            } else {
+                                JOptionPane.showMessageDialog(SudokuSolver.this,
+                                    "This Sudoku has no solution!", "No Solution",
+                                    JOptionPane.WARNING_MESSAGE);
+                                statusLabel.setText("Backtrack: - | Time: - ms");
+                            }
+                        } catch (Exception ex) {
+                            JOptionPane.showMessageDialog(SudokuSolver.this,
+                                "Error during solving.", "Error", JOptionPane.ERROR_MESSAGE);
+                            statusLabel.setText("Backtrack: - | Time: - ms");
+                        }
+                    }
+                };
+
+                worker.execute();
+
             } catch (IllegalArgumentException ex) {
-                // 错误已在 loadBoardFromGUI 中提示
+                // already handled
             }
         }
     }
@@ -173,22 +246,24 @@ public class SudokuSolver extends JFrame {
         @Override
         public void actionPerformed(ActionEvent e) {
             JFileChooser fileChooser = new JFileChooser();
-            fileChooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Text Files", "txt"));
+            fileChooser.setFileFilter(new FileNameExtensionFilter("Text Files", "txt"));
             int result = fileChooser.showOpenDialog(SudokuSolver.this);
             if (result == JFileChooser.APPROVE_OPTION) {
                 File file = fileChooser.getSelectedFile();
                 try {
-                    java.util.List<String> lines = Files.readAllLines(file.toPath());
+                    List<String> lines = Files.readAllLines(file.toPath());
                     if (lines.size() < 9) {
-                        JOptionPane.showMessageDialog(SudokuSolver.this, "The number of lines in the file is less than 9!", "error", JOptionPane.ERROR_MESSAGE);
+                        JOptionPane.showMessageDialog(SudokuSolver.this,
+                            "File must contain at least 9 lines.", "Error", JOptionPane.ERROR_MESSAGE);
                         return;
                     }
-                    clearBoard(); // 先清空
+                    clearBoard();
                     for (int i = 0; i < 9; i++) {
                         String line = lines.get(i).trim();
                         if (line.length() != 9) {
                             JOptionPane.showMessageDialog(SudokuSolver.this,
-                                "第 " + (i + 1) + " 行长度不是 9 个字符！", "格式错误", JOptionPane.ERROR_MESSAGE);
+                                "Line " + (i + 1) + " must be exactly 9 characters long.", "Format Error",
+                                JOptionPane.ERROR_MESSAGE);
                             return;
                         }
                         for (int j = 0; j < 9; j++) {
@@ -200,26 +275,27 @@ public class SudokuSolver extends JFrame {
                                 }
                             } else {
                                 JOptionPane.showMessageDialog(SudokuSolver.this,
-                                    "第 " + (i + 1) + " 行包含非法字符！", "格式错误", JOptionPane.ERROR_MESSAGE);
+                                    "Line " + (i + 1) + " contains invalid character: '" + c + "'",
+                                    "Format Error", JOptionPane.ERROR_MESSAGE);
                                 return;
                             }
                         }
                     }
                 } catch (IOException ex) {
-                    JOptionPane.showMessageDialog(SudokuSolver.this, "读取文件失败: " + ex.getMessage(), "IO 错误", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(SudokuSolver.this,
+                        "Failed to read file: " + ex.getMessage(), "IO Error", JOptionPane.ERROR_MESSAGE);
                 }
             }
         }
     }
 
-    // ========================
-    // 主方法
-    // ========================
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             try {
+                // 修正：使用正确的 API
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
             new SudokuSolver().setVisible(true);
         });
     }
