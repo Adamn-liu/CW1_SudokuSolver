@@ -15,7 +15,9 @@ public class SudokuSolver extends JFrame {
     private volatile boolean solving = false;
     private volatile boolean cancelRequested = false;
     private static int backtrackCount = 0;
-    private int delayMs = 5; // 动画延迟（毫秒）
+    private final int delayMs = 1; // movie delay
+
+    private final JCheckBox showResultOnlyCheckBox;
 
     public SudokuSolver() {
         setTitle("Sudoku Solver with Visualization");
@@ -43,19 +45,23 @@ public class SudokuSolver extends JFrame {
 
         add(gridPanel, BorderLayout.CENTER);
 
-        JPanel buttonPanel = new JPanel();
+        //button + rechooose
+        JPanel controlPanel = new JPanel(new FlowLayout());
         JButton solveButton = new JButton("Solve");
-        JButton clearButton = new JButton("Erase");
+        JButton clearButton = new JButton("erase");
         JButton loadButton = new JButton("Load .txt");
+
+        showResultOnlyCheckBox = new JCheckBox("Show Result Only", false);
 
         solveButton.addActionListener(new SolveAction());
         clearButton.addActionListener(e -> clearBoard());
         loadButton.addActionListener(new LoadAction());
 
-        buttonPanel.add(solveButton);
-        buttonPanel.add(clearButton);
-        buttonPanel.add(loadButton);
-        add(buttonPanel, BorderLayout.SOUTH);
+        controlPanel.add(solveButton);
+        controlPanel.add(clearButton);
+        controlPanel.add(loadButton);
+        controlPanel.add(showResultOnlyCheckBox);
+        add(controlPanel, BorderLayout.SOUTH);
 
         statusLabel = new JLabel("Backtrack: - | Time: - ms", JLabel.CENTER);
         statusLabel.setFont(new Font("Arial", Font.PLAIN, 12));
@@ -104,10 +110,7 @@ public class SudokuSolver extends JFrame {
         return true;
     }
 
-    // ========================
-    // GUI 事件处理器
-    // ========================
-
+    // Solve Action with Animation Toggle
     class SolveAction implements ActionListener {
         @Override
         public void actionPerformed(ActionEvent e) {
@@ -124,124 +127,169 @@ public class SudokuSolver extends JFrame {
                         }
                     }
                 }
-
                 solving = true;
                 cancelRequested = false;
                 backtrackCount = 0;
                 long startTime = System.currentTimeMillis();
 
-                // SwingWorker 匿名内部类
-                SwingWorker<Boolean, int[]> worker = new SwingWorker<Boolean, int[]>() {
-                    private int[][] localBoard = board; // 引用外部 board
+                boolean showResultOnly = showResultOnlyCheckBox.isSelected();
 
-                    @Override
-                    protected Boolean doInBackground() throws Exception {
-                        return solveRecursive(original);
-                    }
+                if (showResultOnly) {
+                    // pattern1: result only 
+                    boolean solved = solveWithoutAnimation(original);
+                    long duration = System.currentTimeMillis() - startTime;
+                    SwingUtilities.invokeLater(() -> {
+                        solving = false;
+                        if (solved) {
+                            for (int i = 0; i < 9; i++) {
+                                for (int j = 0; j < 9; j++) {
+                                    if (original[i][j] == 0 && board[i][j] != 0) {
+                                        cells[i][j].setText(String.valueOf(board[i][j]));
+                                        cells[i][j].setForeground(Color.BLUE);
+                                    }
+                                }
+                            }
+                            statusLabel.setText(String.format("Backtrack: %d | Time: %d ms", backtrackCount, duration));
+                        } else {
+                            JOptionPane.showMessageDialog(SudokuSolver.this,
+                                "This Sudoku has no solution!", "No Solution", JOptionPane.WARNING_MESSAGE);
+                            statusLabel.setText("Backtrack: - | Time: - ms");
+                        }
+                    });
+                } else {
+                    // pattern2: movie
+                    SwingWorker<Boolean, int[]> worker = new SwingWorker<Boolean, int[]>() {
+                        private int[][] localBoard = board;
 
-                    // 在 SwingWorker 内部定义求解逻辑
-                    private boolean solveRecursive(int[][] original) {
-                        for (int i = 0; i < 9; i++) {
-                            if (cancelRequested) return false;
-                            for (int j = 0; j < 9; j++) {
+                        @Override
+                        protected Boolean doInBackground() throws Exception {
+                            return solveRecursive(original);
+                        }
+
+                        private boolean solveRecursive(int[][] original) {
+                            for (int i = 0; i < 9; i++) {
                                 if (cancelRequested) return false;
-                                if (localBoard[i][j] == 0) {
-                                    for (int num = 1; num <= 9; num++) {
-                                        if (cancelRequested) return false;
-                                        if (isValidInWorker(i, j, num)) {
-                                            localBoard[i][j] = num;
-                                            publish(new int[]{i, j, num});
+                                for (int j = 0; j < 9; j++) {
+                                    if (cancelRequested) return false;
+                                    if (localBoard[i][j] == 0) {
+                                        for (int num = 1; num <= 9; num++) {
+                                            if (cancelRequested) return false;
+                                            if (isValidWorker(i, j, num)) {
+                                                localBoard[i][j] = num;
+                                                publish(new int[]{i, j, num});
 
-                                            if (delayMs > 0) {
-                                                try {
-                                                    Thread.sleep(delayMs);
-                                                } catch (InterruptedException ex) {
-                                                    cancelRequested = true;
-                                                    return false;
+                                                if (delayMs > 0) {
+                                                    try {
+                                                        Thread.sleep(delayMs);
+                                                    } catch (InterruptedException ex) {
+                                                        cancelRequested = true;
+                                                        return false;
+                                                    }
                                                 }
-                                            }
 
-                                            if (solveRecursive(original)) {
-                                                return true;
-                                            }
+                                                if (solveRecursive(original)) {
+                                                    return true;
+                                                }
 
-                                            localBoard[i][j] = 0;
-                                            publish(new int[]{i, j, 0});
+                                                localBoard[i][j] = 0;
+                                                publish(new int[]{i, j, 0});
 
-                                            if (delayMs > 0) {
-                                                try {
-                                                    Thread.sleep(delayMs);
-                                                } catch (InterruptedException ex) {
-                                                    cancelRequested = true;
-                                                    return false;
+                                                if (delayMs > 0) {
+                                                    try {
+                                                        Thread.sleep(delayMs);
+                                                    } catch (InterruptedException ex) {
+                                                        cancelRequested = true;
+                                                        return false;
+                                                    }
                                                 }
                                             }
                                         }
+                                        backtrackCount++;
+                                        return false;
                                     }
-                                    backtrackCount++;
-                                    return false;
+                                }
+                            }
+                            return true;
+                        }
+
+                        private boolean isValidWorker(int row, int col, int num) {
+                            for (int j = 0; j < 9; j++) if (localBoard[row][j] == num) return false;
+                            for (int i = 0; i < 9; i++) if (localBoard[i][col] == num) return false;
+                            int startRow = 3 * (row / 3);
+                            int startCol = 3 * (col / 3);
+                            for (int i = startRow; i < startRow + 3; i++)
+                                for (int j = startCol; j < startCol + 3; j++)
+                                    if (localBoard[i][j] == num) return false;
+                            return true;
+                        }
+
+                        @Override
+                        protected void process(java.util.List<int[]> chunks) {
+                            for (int[] update : chunks) {
+                                int i = update[0], j = update[1], val = update[2];
+                                cells[i][j].setText(val == 0 ? "" : String.valueOf(val));
+                                if (val != 0) {
+                                    cells[i][j].setForeground(Color.BLUE);
+                                } else {
+                                    cells[i][j].setForeground(Color.BLACK);
                                 }
                             }
                         }
-                        return true;
-                    }
 
-                    // 在 worker 中使用的 isValid（避免访问非 final 外部变量）
-                    private boolean isValidInWorker(int row, int col, int num) {
-                        for (int j = 0; j < 9; j++) if (localBoard[row][j] == num) return false;
-                        for (int i = 0; i < 9; i++) if (localBoard[i][col] == num) return false;
-                        int startRow = 3 * (row / 3);
-                        int startCol = 3 * (col / 3);
-                        for (int i = startRow; i < startRow + 3; i++)
-                            for (int j = startCol; j < startCol + 3; j++)
-                                if (localBoard[i][j] == num) return false;
-                        return true;
-                    }
-
-                    @Override
-                    protected void process(java.util.List<int[]> chunks) {
-                        for (int[] update : chunks) {
-                            int i = update[0], j = update[1], val = update[2];
-                            cells[i][j].setText(val == 0 ? "" : String.valueOf(val));
-                            if (val != 0) {
-                                cells[i][j].setForeground(Color.BLUE);
-                            } else {
-                                cells[i][j].setForeground(Color.BLACK);
-                            }
-                        }
-                    }
-
-                    @Override
-                    protected void done() {
-                        solving = false;
-                        long endTime = System.currentTimeMillis();
-                        try {
-                            boolean solved = get();
-                            long duration = endTime - startTime;
-                            if (solved) {
-                                statusLabel.setText(String.format("Backtrack: %d | Time: %d ms", backtrackCount, duration));
-                            } else {
+                        @Override
+                        protected void done() {
+                            solving = false;
+                            long endTime = System.currentTimeMillis();
+                            try {
+                                boolean solved = get();
+                                long duration = endTime - startTime;
+                                if (solved) {
+                                    statusLabel.setText(String.format("Backtrack: %d | Time: %d ms", backtrackCount, duration));
+                                } else {
+                                    JOptionPane.showMessageDialog(SudokuSolver.this,
+                                        "This Sudoku has no solution!", "No Solution",
+                                        JOptionPane.WARNING_MESSAGE);
+                                    statusLabel.setText("Backtrack: - | Time: - ms");
+                                }
+                            } catch (Exception ex) {
                                 JOptionPane.showMessageDialog(SudokuSolver.this,
-                                    "This Sudoku has no solution!", "No Solution",
-                                    JOptionPane.WARNING_MESSAGE);
+                                    "Error during solving.", "Error", JOptionPane.ERROR_MESSAGE);
                                 statusLabel.setText("Backtrack: - | Time: - ms");
                             }
-                        } catch (Exception ex) {
-                            JOptionPane.showMessageDialog(SudokuSolver.this,
-                                "Error during solving.", "Error", JOptionPane.ERROR_MESSAGE);
-                            statusLabel.setText("Backtrack: - | Time: - ms");
                         }
-                    }
-                };
-
-                worker.execute();
+                    };
+                    worker.execute();
+                }
 
             } catch (IllegalArgumentException ex) {
-                // already handled
+                solving = false;
             }
+        }
+
+        // result only
+        private boolean solveWithoutAnimation(int[][] original) {
+            for (int i = 0; i < 9; i++) {
+                for (int j = 0; j < 9; j++) {
+                    if (board[i][j] == 0) {
+                        for (int num = 1; num <= 9; num++) {
+                            if (isValid(i, j, num)) {
+                                board[i][j] = num;
+                                if (solveWithoutAnimation(original)) {
+                                    return true;
+                                }
+                                board[i][j] = 0;
+                            }
+                        }
+                        backtrackCount++;
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
     }
 
+    // Load .txt Action
     class LoadAction implements ActionListener {
         @Override
         public void actionPerformed(ActionEvent e) {
@@ -289,10 +337,10 @@ public class SudokuSolver extends JFrame {
         }
     }
 
+    // Main
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             try {
-                // 修正：使用正确的 API
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
             } catch (Exception ignored) {
             }
